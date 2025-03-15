@@ -1,3 +1,4 @@
+# app.py
 import streamlit as st
 import pandas as pd
 import time
@@ -6,10 +7,12 @@ from io import BytesIO
 import requests
 import matplotlib.pyplot as plt
 import seaborn as sns
+import uuid  # Importing uuid for unique key generation
 
 # Import the scraper model
 from model.scraper import ECommerceComparisonModel
 
+# Configure Streamlit page
 st.set_page_config(
     page_title="E-commerce Product Comparison",
     page_icon="🛍️",
@@ -17,7 +20,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Initialize session state variables if they don't exist
+# Initialize session state variables
 if 'search_history' not in st.session_state:
     st.session_state.search_history = []
 if 'current_results' not in st.session_state:
@@ -33,6 +36,8 @@ if 'search_filters' not in st.session_state:
         'max_price': 50000,
         'min_rating': 0.0
     }
+if 'comparison_products' not in st.session_state:
+    st.session_state.comparison_products = []
 
 # Sidebar navigation
 st.sidebar.title("Navigation")
@@ -78,17 +83,13 @@ def search_products(query, progress_bar=None, filters=None):
         amazon_products = model.search_amazon(query)
 
         progress_bar.progress(0.4)
-        progress_bar.text("Searching Flipkart...")
-        flipkart_products = model.search_flipkart(query)
-
-        progress_bar.progress(0.7)
-        progress_bar.text("Searching Myntra...")
-        myntra_products = model.search_myntra(query)
+        progress_bar.text("Searching Snapdeal...")
+        snapdeal_products = model.search_snapdeal(query)
 
         progress_bar.progress(0.9)
         progress_bar.text("Comparing results...")
 
-        all_products = amazon_products + flipkart_products + myntra_products
+        all_products = amazon_products + snapdeal_products
         results = model.process_and_compare_products(all_products, query)
 
         progress_bar.progress(1.0)
@@ -116,6 +117,36 @@ def search_products(query, progress_bar=None, filters=None):
         })
 
     return results
+
+# Modify the display_product_card function to ensure unique keys
+def display_product_card(product, index):
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        if product.get('image'):
+            img = load_image(product['image'])
+            if img:
+                st.image(img, width=200)
+            else:
+                st.image("https://via.placeholder.com/200x250?text=No+Image", width=200)
+
+    with col2:
+        st.subheader(product['title'])
+        st.write(f"**Price:** ₹{product['price']:.2f}")
+        st.write(f"**Rating:** {'⭐' * int(product['rating'])} ({product['rating']:.1f})")
+        st.write(f"**Reviews:** {product['reviews']}")
+        st.write(f"**Source:** {product['source']}")
+        if 'score' in product:
+            st.write(f"**Overall Score:** {product['score']}%")
+        st.markdown(f"[View Product]({product['link']})")
+        
+        # Add comparison button if on search page
+        if page == "Search Products":
+            # Generate a truly unique key using UUID
+            unique_key = f"compare_{index}_{uuid.uuid4()}"
+            if st.button(f"Add to Compare", key=unique_key):
+                if product not in st.session_state.comparison_products:
+                    st.session_state.comparison_products.append(product)
+                    st.success(f"Added '{product['title']}' to comparison list")
 
 # Search Products Page
 if page == "Search Products":
@@ -167,25 +198,175 @@ if page == "Search Products":
 
             st.header("Best Overall Match")
             best_product = results['top_results'][0]
-
-            col1, col2 = st.columns([1, 2])
-            with col1:
-                if best_product.get('image'):
-                    img = load_image(best_product['image'])
-                    if img:
-                        st.image(img, width=200)
-                    else:
-                        st.image("https://via.placeholder.com/200x250?text=No+Image", width=200)
-
-            with col2:
-                st.subheader(best_product['title'])
-                st.write(f"**Price:** ₹{best_product['price']:.2f}")
-                st.write(f"**Rating:** {'⭐' * int(best_product['rating'])} ({best_product['rating']:.1f})")
-                st.write(f"**Reviews:** {best_product['reviews']}")
-                st.write(f"**Source:** {best_product['source']}")
-                st.write(f"**Overall Score:** {best_product['score']}%")
-                st.markdown(f"[View Product]({best_product['link']})")
-
+            display_product_card(best_product, 0)
+            
+            st.header("All Results")
+            for i, product in enumerate(results['all_products']):
+                with st.expander(product['title']):
+                    display_product_card(product, i)
         else:
             st.warning(f"No products found matching '{search_query}'. Try a different search term.")
 
+# Compare View Page
+elif page == "Compare View":
+    st.title("Compare Products")
+    
+    if not st.session_state.comparison_products:
+        st.info("No products added for comparison yet. Add products from the Search page first.")
+    else:
+        st.write(f"Comparing {len(st.session_state.comparison_products)} products")
+        
+        # Remove product button
+        for i, product in enumerate(st.session_state.comparison_products):
+            if st.button(f"Remove {product['title'][:20]}...", key=f"remove_{i}"):
+                st.session_state.comparison_products.pop(i)
+                st.experimental_rerun()
+        
+        # Create comparison table
+        if st.session_state.comparison_products:
+            comparison_data = []
+            for product in st.session_state.comparison_products:
+                product_data = {
+                    "Title": product['title'],
+                    "Price (₹)": product['price'],
+                    "Rating": product['rating'],
+                    "Reviews": product['reviews'],
+                    "Source": product['source'],
+                    "Link": product['link']
+                }
+                comparison_data.append(product_data)
+            
+            comparison_df = pd.DataFrame(comparison_data)
+            st.dataframe(comparison_df)
+            
+            # Visual comparison
+            st.subheader("Price Comparison")
+            fig, ax = plt.subplots(figsize=(10, 6))
+            prices = [p['price'] for p in st.session_state.comparison_products]
+            titles = [p['title'][:20] + "..." for p in st.session_state.comparison_products]
+            
+            ax.bar(titles, prices)
+            ax.set_ylabel("Price (₹)")
+            ax.set_title("Price Comparison")
+            plt.xticks(rotation=45, ha="right")
+            st.pyplot(fig)
+
+# Search History Page
+elif page == "Search History":
+    st.title("Search History")
+    
+    if not st.session_state.search_history:
+        st.info("No search history yet. Search for products to build history.")
+    else:
+        st.write(f"You have searched for {len(st.session_state.search_history)} products.")
+        
+        history_df = pd.DataFrame(st.session_state.search_history)
+        st.dataframe(history_df)
+        
+        if st.button("Clear History"):
+            st.session_state.search_history = []
+            st.success("Search history cleared!")
+            st.experimental_rerun()
+
+# Trend Analysis Page
+elif page == "Trend Analysis":
+    st.title("Product Trend Analysis")
+    
+    st.info("This feature analyzes patterns and trends from your search data and product comparisons.")
+    
+    if not st.session_state.search_history:
+        st.warning("Not enough search data to analyze trends. Search for more products first.")
+    else:
+        st.subheader("Search Activity Over Time")
+        
+        # Convert timestamps to datetime
+        history_df = pd.DataFrame(st.session_state.search_history)
+        history_df['timestamp'] = pd.to_datetime(history_df['timestamp'])
+        
+        # Group by date and count searches
+        date_counts = history_df.groupby(history_df['timestamp'].dt.date).count()['query']
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.plot(date_counts.index, date_counts.values, marker='o')
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Number of Searches")
+        ax.set_title("Search Activity Trend")
+        st.pyplot(fig)
+        
+        # Display most searched terms
+        st.subheader("Most Searched Terms")
+        query_counts = history_df['query'].value_counts().head(5)
+        st.bar_chart(query_counts)
+
+# Settings Page
+elif page == "Settings":
+    st.title("Settings")
+    
+    st.subheader("Search Preferences")
+    
+    with st.form("settings_form"):
+        st.write("Default Search Filters")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            default_min_price = st.number_input("Default Min Price (₹)", 0, 50000, st.session_state.search_filters['min_price'])
+            default_max_price = st.number_input("Default Max Price (₹)", 0, 50000, st.session_state.search_filters['max_price'])
+        
+        with col2:
+            default_min_rating = st.slider("Default Minimum Rating", 0.0, 5.0, float(st.session_state.search_filters['min_rating']), step=0.1)
+        
+        default_sources = st.multiselect("Default Sources", ["Amazon", "Snapdeal", "Flipkart"], ["Amazon", "Snapdeal"])
+        
+        save_settings = st.form_submit_button("Save Settings")
+        
+        if save_settings:
+            st.session_state.search_filters = {
+                'size': st.session_state.search_filters['size'],
+                'color': st.session_state.search_filters['color'],
+                'occasion': st.session_state.search_filters['occasion'],
+                'min_price': default_min_price,
+                'max_price': default_max_price,
+                'min_rating': default_min_rating
+            }
+            st.success("Settings saved successfully!")
+    
+    st.subheader("App Appearance")
+    theme = st.selectbox("Theme", ["Light", "Dark", "System Default"], 0)
+    
+    if st.button("Apply Theme"):
+        st.success(f"{theme} theme applied!")
+
+# About Page
+elif page == "About":
+    st.title("About E-commerce Product Comparison")
+    
+    st.write(""" 
+    This application helps you find the best products across multiple e-commerce platforms,
+    compare prices, features, and ratings to make informed shopping decisions.
+    
+    ### Features:
+    - **Search across multiple e-commerce platforms**: Compare products from Amazon, Snapdeal, and more.
+    - **Filter products**: Narrow down results by price, rating, size, color, and occasion.
+    - **Compare products side by side**: View detailed comparisons of selected products.
+    - **Track search history**: Analyze your past searches and trends.
+    - **Visualize data**: See price distributions and search activity over time.
+    """)
+    
+    st.subheader("How to Use")
+    st.write(""" 
+    1. **Search Products**: Enter a product name in the search bar and apply filters to refine results.
+    2. **Compare Products**: Add products to the comparison list and view them side by side.
+    3. **View Trends**: Analyze your search history and product trends.
+    4. **Customize Settings**: Adjust default filters and app appearance.
+    """)
+    
+    st.subheader("Developed By")
+    st.write(""" 
+    - **ALPHA-CODE**
+    - **Contact**: harishreddy.workmail@gmail.com
+    - **GitHub**: [Our GitHub Profile](https://github.com/itsAcchu)
+    """)
+
+# Footer
+st.sidebar.markdown("---")
+st.sidebar.write("© 2025 E-commerce Product Comparison Application")
