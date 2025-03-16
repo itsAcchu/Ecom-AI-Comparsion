@@ -36,12 +36,13 @@ if 'search_filters' not in st.session_state:
         'max_price': 50000,
         'min_rating': 0.0
     }
-if 'comparison_products' not in st.session_state:
-    st.session_state.comparison_products = []
+# Add a product_keys dictionary to track unique keys for each product
+if 'product_keys' not in st.session_state:
+    st.session_state.product_keys = {}
 
 # Sidebar navigation
 st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to", ["Search Products", "Compare View", "Search History", "Trend Analysis", "Settings", "About"])
+page = st.sidebar.radio("Go to", ["Search Products", "Search History", "Trend Analysis", "Settings", "About"])
 
 # Load image from URL
 def load_image(image_url):
@@ -118,8 +119,22 @@ def search_products(query, progress_bar=None, filters=None):
 
     return results
 
-# Modify the display_product_card function to ensure unique keys
-def display_product_card(product, index):
+# Generate a unique product ID for consistent key generation
+def get_product_id(product):
+    # Create a unique identifier based on product attributes
+    product_identifier = f"{product['title']}_{product['source']}_{product['price']}"
+    
+    # If we've seen this product before, return its existing ID
+    if product_identifier in st.session_state.product_keys:
+        return st.session_state.product_keys[product_identifier]
+    
+    # Otherwise, generate a new UUID and store it
+    new_id = str(uuid.uuid4())
+    st.session_state.product_keys[product_identifier] = new_id
+    return new_id
+
+# Modified display_product_card function with context parameter
+def display_product_card(product, index, context="main"):
     col1, col2 = st.columns([1, 2])
     with col1:
         if product.get('image'):
@@ -138,15 +153,6 @@ def display_product_card(product, index):
         if 'score' in product:
             st.write(f"**Overall Score:** {product['score']}%")
         st.markdown(f"[View Product]({product['link']})")
-        
-        # Add comparison button if on search page
-        if page == "Search Products":
-            # Generate a truly unique key using UUID
-            unique_key = f"compare_{index}_{uuid.uuid4()}"
-            if st.button(f"Add to Compare", key=unique_key):
-                if product not in st.session_state.comparison_products:
-                    st.session_state.comparison_products.append(product)
-                    st.success(f"Added '{product['title']}' to comparison list")
 
 # Search Products Page
 if page == "Search Products":
@@ -198,58 +204,14 @@ if page == "Search Products":
 
             st.header("Best Overall Match")
             best_product = results['top_results'][0]
-            display_product_card(best_product, 0)
+            display_product_card(best_product, 0, "best")
             
             st.header("All Results")
             for i, product in enumerate(results['all_products']):
                 with st.expander(product['title']):
-                    display_product_card(product, i)
+                    display_product_card(product, i, "expanded")
         else:
             st.warning(f"No products found matching '{search_query}'. Try a different search term.")
-
-# Compare View Page
-elif page == "Compare View":
-    st.title("Compare Products")
-    
-    if not st.session_state.comparison_products:
-        st.info("No products added for comparison yet. Add products from the Search page first.")
-    else:
-        st.write(f"Comparing {len(st.session_state.comparison_products)} products")
-        
-        # Remove product button
-        for i, product in enumerate(st.session_state.comparison_products):
-            if st.button(f"Remove {product['title'][:20]}...", key=f"remove_{i}"):
-                st.session_state.comparison_products.pop(i)
-                st.experimental_rerun()
-        
-        # Create comparison table
-        if st.session_state.comparison_products:
-            comparison_data = []
-            for product in st.session_state.comparison_products:
-                product_data = {
-                    "Title": product['title'],
-                    "Price (₹)": product['price'],
-                    "Rating": product['rating'],
-                    "Reviews": product['reviews'],
-                    "Source": product['source'],
-                    "Link": product['link']
-                }
-                comparison_data.append(product_data)
-            
-            comparison_df = pd.DataFrame(comparison_data)
-            st.dataframe(comparison_df)
-            
-            # Visual comparison
-            st.subheader("Price Comparison")
-            fig, ax = plt.subplots(figsize=(10, 6))
-            prices = [p['price'] for p in st.session_state.comparison_products]
-            titles = [p['title'][:20] + "..." for p in st.session_state.comparison_products]
-            
-            ax.bar(titles, prices)
-            ax.set_ylabel("Price (₹)")
-            ax.set_title("Price Comparison")
-            plt.xticks(rotation=45, ha="right")
-            st.pyplot(fig)
 
 # Search History Page
 elif page == "Search History":
@@ -347,7 +309,6 @@ elif page == "About":
     ### Features:
     - **Search across multiple e-commerce platforms**: Compare products from Amazon, Snapdeal, and more.
     - **Filter products**: Narrow down results by price, rating, size, color, and occasion.
-    - **Compare products side by side**: View detailed comparisons of selected products.
     - **Track search history**: Analyze your past searches and trends.
     - **Visualize data**: See price distributions and search activity over time.
     """)
@@ -355,9 +316,8 @@ elif page == "About":
     st.subheader("How to Use")
     st.write(""" 
     1. **Search Products**: Enter a product name in the search bar and apply filters to refine results.
-    2. **Compare Products**: Add products to the comparison list and view them side by side.
-    3. **View Trends**: Analyze your search history and product trends.
-    4. **Customize Settings**: Adjust default filters and app appearance.
+    2. **View Trends**: Analyze your search history and product trends.
+    3. **Customize Settings**: Adjust default filters and app appearance.
     """)
     
     st.subheader("Developed By")
